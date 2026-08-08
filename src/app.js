@@ -1,3 +1,4 @@
+import path from 'node:path';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express from 'express';
@@ -69,6 +70,10 @@ export function createApp(healthDependencies = {}) {
   app.use('/auth', authRouter(authLimiter));
   app.use('/problems', globalLimiter, problemRouter);
   app.use('/submissions', globalLimiter, submissionRouter);
+
+  // Serve production frontend assets if built
+  const frontendDist = path.join(process.cwd(), 'frontend/dist');
+  app.use(express.static(frontendDist));
 
   app.use(notFoundHandler);
   app.use(errorHandler);
