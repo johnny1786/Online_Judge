@@ -7,8 +7,12 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.string().default('info'),
-  MONGODB_URI: z.string().default('mongodb://localhost:27017/ojx'),
-  REDIS_URL: z.string().url().default('redis://localhost:6379'),
+  MONGODB_URI: isProduction
+    ? z.string().min(1, 'MONGODB_URI must be set in production')
+    : z.string().default('mongodb://localhost:27017/ojx'),
+  REDIS_URL: isProduction
+    ? z.string().url('REDIS_URL must be set to a valid URL in production')
+    : z.string().url().default('redis://localhost:6379'),
   JWT_SECRET: isProduction
     ? z.string().min(32, 'JWT_SECRET must be at least 32 characters in production')
     : z.string().min(32).default('development-only-secret-change-me-123456789'),
