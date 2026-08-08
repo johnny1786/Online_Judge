@@ -6,7 +6,6 @@ const isTls = env.REDIS_URL.startsWith('rediss://');
 
 export const redis = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null,
-  lazyConnect: true,
   enableReadyCheck: true,
   ...(isTls ? { tls: { rejectUnauthorized: false } } : {}),
 });
@@ -14,7 +13,13 @@ export const redis = new IORedis(env.REDIS_URL, {
 redis.on('error', (error) => logger.error({ error }, 'Redis connection error'));
 
 export async function connectRedis() {
-  if (redis.status === 'wait') await redis.connect();
+  if (redis.status !== 'ready') {
+    await new Promise((resolve, reject) => {
+      if (redis.status === 'ready') return resolve();
+      redis.once('ready', resolve);
+      redis.once('error', reject);
+    });
+  }
   await redis.ping();
   logger.info('Redis connected');
 }
