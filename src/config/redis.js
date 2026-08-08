@@ -2,10 +2,13 @@ import IORedis from 'ioredis';
 import { env } from './env.js';
 import { logger } from './logger.js';
 
+const isTls = env.REDIS_URL.startsWith('rediss://');
+
 export const redis = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null,
   lazyConnect: true,
-  enableReadyCheck: true
+  enableReadyCheck: true,
+  ...(isTls ? { tls: { rejectUnauthorized: false } } : {}),
 });
 
 redis.on('error', (error) => logger.error({ error }, 'Redis connection error'));
