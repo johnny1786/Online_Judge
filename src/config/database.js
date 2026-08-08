@@ -11,3 +11,8 @@ export async function connectDatabase() {
 export function databaseHealth() {
   return mongoose.connection.readyState === 1;
 }
+
+export async function disconnectDatabase() {
+  await mongoose.disconnect();
+  logger.info('MongoDB disconnected');
+}

@@ -1,94 +1,136 @@
 # OJX
 
-OJX is a Node.js foundation for a future distributed online judge. The current repository implements an Express API shell, MongoDB and Redis connectivity, health reporting, structured logging, a worker heartbeat, and Docker Compose development infrastructure. It does **not** yet implement user accounts, submissions, judging, queues, problem management, or a frontend.
+OJX is a Node.js distributed online judge platform. It supports user authentication with RBAC, problem management, code submissions judged inside isolated Docker containers, real-time verdict delivery via Socket.IO, and a BullMQ-based submission pipeline.
 
-## Implemented features
+## Implemented Features
 
-- Express API with Helmet, CORS, JSON request-size limit, and global rate limiting.
-- Zod-validated runtime configuration.
-- MongoDB and Redis connection helpers.
-- `/health`, `/health/db`, `/health/redis`, and `/health/worker` endpoints.
-- Pino request/error logging.
-- A separate worker process publishing a Redis liveness heartbeat.
-- Docker Compose services for MongoDB, Redis, API, and worker.
-- Jest/Supertest coverage for health routes.
+- **Auth & RBAC** — JWT access tokens (15m) + httpOnly refresh tokens (7d), bcrypt password hashing, token rotation, Redis denylist on logout, role-based middleware (`user` / `admin`).
+- **Problem Management** — Problem CRUD with private test cases (never exposed in API), public examples, difficulty/tags/status, paginated listing with filters.
+- **Submission Pipeline** — BullMQ queue (`ojx-submissions`) with idempotent job IDs, exponential backoff retries, and a worker processor that runs code against every test case.
+- **Docker Sandbox** — Each test case runs in an ephemeral container: no network (`NetworkDisabled`), CPU quota (0.5 CPU), memory limit, PID limit 50, `no-new-privileges`. Container is always force-removed on completion or error.
+- **Supported Languages** — C++17 (gcc:13-alpine), Python 3 (python:3.12-alpine), JavaScript (node:20-alpine).
+- **Real-time Verdicts** — Socket.IO pushes `verdict` events to `user:<userId>` rooms when judging finishes. Requires JWT in `socket.handshake.auth.token`.
+- **Verdict States** — `queued → running → accepted | wrong_answer | time_limit_exceeded | memory_limit_exceeded | runtime_error | compilation_error | internal_error`.
+- **Security** — Helmet, CORS, Redis-backed rate limiting (global 100/15min, auth 10/15min), 1MB body limit, Zod request validation on all routes.
+- **Health Endpoints** — `/health`, `/health/db`, `/health/redis`, `/health/worker` (uses per-worker heartbeat key).
+- **Graceful Shutdown** — SIGTERM/SIGINT drains HTTP server, closes Socket.IO, BullMQ worker, Mongoose, Redis connections with a 10s timeout.
+- **CI/CD** — GitHub Actions: lint, test, coverage, Docker build smoke test, `npm audit`.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  Client --> API[Express API]
+  Client --> API[Express API + Socket.IO :3000]
   API --> Mongo[(MongoDB)]
   API --> Redis[(Redis)]
+  API --> Queue[BullMQ ojx-submissions]
+  Queue --> Worker[Judge Worker]
+  Worker --> Sandbox[Docker Sandbox per test case]
   Worker --> Mongo
-  Worker --> Redis
-  Worker -- heartbeat --> Redis
-  API -- reads heartbeat --> Redis
+  Worker --> Socket[Socket.IO verdict event]
+  Socket --> Client
 ```
-
-The intended future architecture is documented separately from the implementation in [docs/architecture.md](docs/architecture.md). See [ARCHITECTURE_REVIEW.md](ARCHITECTURE_REVIEW.md) for the current-state audit.
 
 ## Requirements
 
-- Node.js 20.11 or later and npm
-- Docker Desktop with Docker Compose (recommended for MongoDB and Redis)
+- Node.js 20.11+ and npm
+- Docker Desktop with Docker Compose (required for MongoDB, Redis, and sandbox execution)
 
-## Installation and local run
+## Quick Start
 
 ```bash
 cp .env.example .env
-npm install
+# Edit .env — set JWT_SECRET and REFRESH_TOKEN_SECRET to long random strings
+
+npm ci
 docker compose up --build
 ```
 
-Compose supplies the internal `mongo` and `redis` hostnames automatically. To run API and worker directly on the host, set `MONGODB_URI=mongodb://localhost:27017/ojx` and `REDIS_URL=redis://localhost:6379` in `.env`, start those services, then run:
-
-```bash
-npm run dev
-npm run worker
-```
+The API listens on `http://localhost:3000`.
 
 ## Configuration
 
 | Variable | Purpose |
 |---|---|
 | `NODE_ENV` | `development`, `test`, or `production` |
-| `PORT` | API listen port |
+| `PORT` | API listen port (default 3000) |
 | `MONGODB_URI` | MongoDB connection URI |
 | `REDIS_URL` | Redis connection URI |
-| `JWT_SECRET` / `JWT_EXPIRES_IN` | Reserved for future authentication; not currently used |
-| `CORS_ORIGIN` | Comma-separated allowed browser origins |
-| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX` | Global in-memory API rate-limit policy |
+| `JWT_SECRET` | Access token signing secret (min 32 chars; **required** in production) |
+| `JWT_EXPIRES_IN` | Access token TTL (default `15m`) |
+| `REFRESH_TOKEN_SECRET` | Refresh token signing secret (min 32 chars; **required** in production) |
+| `REFRESH_TOKEN_EXPIRES_IN` | Refresh token TTL (default `7d`) |
+| `CORS_ORIGIN` | Comma-separated allowed origins |
+| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX` | Global rate limit policy |
 
-## API documentation
+## API Reference
 
+### Auth
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/auth/signup` | — | Register a new user |
+| `POST` | `/auth/login` | — | Login, returns access token + sets refresh cookie |
+| `POST` | `/auth/refresh` | Cookie | Rotate refresh token |
+| `POST` | `/auth/logout` | Cookie | Revoke refresh token |
+| `GET` | `/auth/me` | Bearer | Current user |
+
+### Problems
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `GET` | `/problems` | — | List published problems (paginated, filterable) |
+| `GET` | `/problems/:slug` | — | Single problem (no private test cases) |
+| `POST` | `/problems` | Admin | Create problem |
+| `PUT` | `/problems/:slug` | Admin | Update problem |
+
+### Submissions
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/submissions` | Bearer | Submit code for judging |
+| `GET` | `/submissions` | Bearer | List own submissions |
+| `GET` | `/submissions/:id` | Bearer | Get submission + verdict |
+
+### Health
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Overall API dependency status |
-| `GET` | `/health/db` | MongoDB connection status |
-| `GET` | `/health/redis` | Redis connection status |
+| `GET` | `/health` | Overall status |
+| `GET` | `/health/db` | MongoDB status |
+| `GET` | `/health/redis` | Redis status |
 | `GET` | `/health/worker` | Worker heartbeat status |
 
-The Postman collection is [postman/OJX-Phase-1.postman_collection.json](postman/OJX-Phase-1.postman_collection.json).
+## Socket.IO
+
+Connect with a valid access token to receive real-time verdicts:
+
+```javascript
+const socket = io('http://localhost:3000', {
+  auth: { token: '<ACCESS_TOKEN>' }
+});
+
+socket.on('verdict', ({ submissionId, status, score, executionTime, results }) => {
+  console.log(`Submission ${submissionId}: ${status} (score: ${score}%)`);
+});
+```
 
 ## Testing
 
 ```bash
-npm test
-npm run lint
-npm run test:coverage
+npm run lint          # ESLint — 0 errors expected
+NODE_ENV=test npm test            # 27 tests across 5 suites
+npm run test:coverage # Coverage report
 ```
 
-## Deployment status
+## Making a User Admin
 
-The Compose configuration is suitable for local development only. It exposes MongoDB and Redis host ports and has no TLS, secrets manager, production image lockfile, container health checks for API/worker, CI/CD, or external monitoring. See the production checklist before any deployment.
+By default all users get the `user` role. To promote to admin via MongoDB shell:
 
-## Screenshots
+```js
+db.users.updateOne({ email: 'you@example.com' }, { $set: { role: 'admin' } })
+```
 
-_Placeholder: API health response screenshot._
+## Postman Collection
 
-_Placeholder: future judge dashboard screenshot._
+[postman/OJX-Phase-1.postman_collection.json](postman/OJX-Phase-1.postman_collection.json)
 
-## Future improvements
+## License
 
-Authentication/RBAC, persistence schemas, queue processors, sandboxed execution, Socket.IO authorization, observability, CI/CD, and deployment hardening are outstanding. The concrete work is prioritized in [PRODUCTION_READY_CHECKLIST.md](PRODUCTION_READY_CHECKLIST.md).
+MIT

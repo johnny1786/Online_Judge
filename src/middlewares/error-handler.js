@@ -6,7 +6,7 @@ export function notFoundHandler(req, res) {
 
 export function errorHandler(error, req, res, _next) {
   logger.error({ error, requestId: req.id }, 'Unhandled request error');
-  const status = error.statusCode ?? 500;
+  const status = error.status ?? error.statusCode ?? 500;
   res.status(status).json({
     error: {
       code: error.code ?? 'INTERNAL_ERROR',

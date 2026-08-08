@@ -19,3 +19,8 @@ export async function connectRedis() {
 export function redisHealth() {
   return redis.status === 'ready';
 }
+
+export async function disconnectRedis() {
+  await redis.quit();
+  logger.info('Redis disconnected');
+}

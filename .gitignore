@@ -21,4 +21,6 @@ data/
 tmp/
 uploads/
 *.log
+frontend/node_modules/
+frontend/dist/
 .DS_Store
