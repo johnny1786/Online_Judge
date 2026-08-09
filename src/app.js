@@ -65,11 +65,14 @@ export function createApp(healthDependencies = {}) {
     store: makeStore(),
   });
 
-  // Routes
-  app.use('/health', createHealthRouter(health));
-  app.use('/auth', authRouter(authLimiter));
-  app.use('/problems', globalLimiter, problemRouter);
-  app.use('/submissions', globalLimiter, submissionRouter);
+  // Routes (support both /api/* and /*)
+  const healthR = createHealthRouter(health);
+  const authR = authRouter(authLimiter);
+
+  app.use(['/health', '/api/health'], healthR);
+  app.use(['/auth', '/api/auth'], authR);
+  app.use(['/problems', '/api/problems'], globalLimiter, problemRouter);
+  app.use(['/submissions', '/api/submissions'], globalLimiter, submissionRouter);
 
   // Serve production frontend assets if built
   const frontendDist = path.join(process.cwd(), 'frontend/dist');
